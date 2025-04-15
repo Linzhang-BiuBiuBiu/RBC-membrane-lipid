@@ -1,0 +1,41 @@
+library(openxlsx)
+library(dplyr)
+library(readr)
+library(RColorBrewer) #配色
+library(ggrepel)
+library(ggplot2)
+library(scales)
+library(ggrcs)
+library(data.table)
+library(cowplot)
+library(ropls)
+library(this.path)
+
+####1_Setting the working directory####
+setwd(this.dir())
+load("pca_data.RData")
+
+####2_Prepare the data####
+analy_data <- pca_data[,-1:-5]
+data.pca = prcomp(analy_data, center = TRUE, scale. = T)
+pcaPredict = predict(data.pca)
+Type <- pca_data$ORGAN
+Type <- recode(Type,R="RBC membrane",P="Plasma",QC="QC")
+
+PCA = data.frame(PC1 = pcaPredict[, 1], PC2 = pcaPredict[,2], Type = Type)
+summ1 <- summary(data.pca)
+xlab1 <- paste0("PC1(", round(summ1$importance[2, 1] * 100, 2), "%)")
+ylab1 <- paste0("PC2(", round(summ1$importance[2, 2] * 100, 2), "%)")
+col = c("red", "blue")
+
+p = ggplot(data = PCA, aes(PC1, PC2, label = "")) + 
+  geom_text_repel() + geom_point(aes(color = Type)) + 
+  stat_ellipse(aes(fill = Type), type = "norm", geom = "polygon", 
+               alpha = 0.1, color = NA) + scale_colour_manual(name = "Type", 
+                                                              values = col) + 
+  theme(plot.title = element_text(size = 10)) + 
+  labs(x = xlab1, y = ylab1, color = "Condition", title = "Plasma vs RBC membrane") + 
+  guides(fill = "none") + theme_bw() + theme(plot.margin = unit(rep(1.5, 4), "lines")) + 
+  theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank())
+
+ggsave("PCA.tiff",plot = p,dpi = 300,height = 4,width = 5)
