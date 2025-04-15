@@ -1,0 +1,474 @@
+library(openxlsx)
+library(dplyr)
+library(readr)
+library(RColorBrewer) 
+library(ggrepel)
+library(ggplot2)
+library(scales)
+library(ggrcs)
+library(data.table)
+library(cowplot)
+library(ropls)
+library(this.path)
+
+####1_Setting the working directory####
+setwd(this.dir())
+load("p_r_lipid.RData")
+
+colnames(p_lip) %>% dput()
+lipid_type <- c("TG","Cer","SM","PE","FA ","PG","PI","PA","PC","DG")
+
+lipid_subtype <- c()
+for(i in lipid_type){
+  lipi_loc_p <- grep(i,colnames(p_lip),ignore.case = T)
+  tem_data_p <- p_lip[,lipi_loc_p] %>% apply(1,sum) 
+  
+  lipi_loc_r <- grep(i,colnames(r_lip),ignore.case = T)
+  tem_data_r <- r_lip[,lipi_loc_r] %>% apply(1,sum) 
+  
+  lipi_tem <- data.frame(type=c(rep("p",1550),rep("r",1550)),
+                         lip=c(tem_data_p,tem_data_r))
+  
+  colnames(lipi_tem)[2] <- i
+  
+  if(i %in% "TG"){
+    lipid_subtype <- lipi_tem
+    
+  }else{
+    lipid_subtype <- cbind(lipid_subtype,lipi_tem)
+    loc <- ncol(lipid_subtype)-1
+    lipid_subtype <- lipid_subtype[,-loc]
+  }
+}
+
+
+####2_The distribution of different lipids was counted####
+lipid_type <- c("TG","Cer","SM","PE","FA ","PG","PI","PA","PC","DG")
+
+lipid_subtype <- c()
+for(i in lipid_type){
+  lipi_loc_p <- grep(i,colnames(p_lip),ignore.case = T)
+  tem_data_p <- p_lip[,lipi_loc_p] %>% apply(1,sum) 
+  
+  lipi_loc_r <- grep(i,colnames(r_lip),ignore.case = T)
+  tem_data_r <- r_lip[,lipi_loc_r] %>% apply(1,sum) 
+  
+  lipi_tem <- data.frame(type=c(rep("p",1550),rep("r",1550)),
+                         lip=c(tem_data_p,tem_data_r))
+  
+  colnames(lipi_tem)[2] <- i
+  
+  if(i %in% "TG"){
+    lipid_subtype <- lipi_tem
+    
+  }else{
+    lipid_subtype <- cbind(lipid_subtype,lipi_tem)
+    loc <- ncol(lipid_subtype)-1
+    lipid_subtype <- lipid_subtype[,-loc]
+  }
+}
+
+
+lipid_subtype$type <- recode(lipid_subtype$type,p="Plasma",r="RBC membrane")
+data <- gather(lipid_subtype,key = "Lipid",value = "Expression",-type)
+colnames(data)=c("Type","Lipid","Expression")
+
+
+p=ggviolin(data, x="Lipid", y="Expression", color = "Type", 
+           ylab="Relative content",
+           xlab="",
+           #legend.title=x,
+           add.params = list(fill="white"),
+           palette = c("red","blue"),
+           width=1, add = "boxplot") + ylim(0,1500)+theme(legend.position = "top")
+
+p1=p+stat_compare_means(aes(group=Type),
+                        method="wilcox.test", #可换其他统计方法
+                        symnum.args=list(cutpoints = c(0, 0.001, 0.01, 0.05, 1), 
+                                         symbols = c("***", "**", "*", " ")),
+                        label = "p.signif")
+
+ggsave("lipid_type.tiff",plot = p1,dpi=300,width = 6,height = 4)
+
+###3_limma for different lipid###
+
+Type_p <- p_lip$HF
+Type_r <- r_lip$HF
+
+design <- model.matrix(~0+factor(Type_p))
+colnames(design) <- c("Con","HF")
+fit <- lmFit(t(p_lip[,-1]),design)
+cont.matrix<-makeContrasts(HF-Con,levels=design)
+fit2 <- contrasts.fit(fit, cont.matrix)
+fit2 <- eBayes(fit2)
+
+diff <- topTable(fit2,adjust='fdr',number=200000)
+diff$log10FDR <- log10(diff$adj.P.Val)
+diff$FC <- 2.7182818284^diff$logFC
+diff$log2FC <- log2(diff$FC)
+diff$log10AJPne <- -log10(diff$adj.P.Val)
+diff$abslog2FC <- abs(diff$log2FC)
+diff$Lipid <- rownames(diff)
+
+allDiff_p <- diff
+allDiff_sig_p <- diff |> filter(P.Value < 0.01)
+
+design <- model.matrix(~0+factor(Type_r))
+colnames(design) <- c("Con","HF")
+fit <- lmFit(t(r_lip[,-1]),design)
+cont.matrix<-makeContrasts(HF-Con,levels=design)
+fit2 <- contrasts.fit(fit, cont.matrix)
+fit2 <- eBayes(fit2)
+
+diff <- topTable(fit2,adjust='fdr',number=200000)
+diff$log10FDR <- log10(diff$adj.P.Val)
+diff$FC <- 2.7182818284^diff$logFC
+diff$log2FC <- log2(diff$FC)
+diff$log10AJPne <- -log10(diff$adj.P.Val)
+diff$abslog2FC <- abs(diff$log2FC)
+diff$Lipid <- rownames(diff)
+
+allDiff_r <- diff
+allDiff_sig_r <- diff |> filter(P.Value < 0.01)
+
+####3_Volcano map for plasma and RBC membrane lipid####
+grep_rude <- function(data,col_in,vectors){
+  tem_index <- grep(vectors,data[,col_in],ignore.case = T)
+  tem_data <- data[tem_index,]
+  return(tem_data)
+}
+
+core_lipid_r <- allDiff_r %>% 
+  filter(adj.P.Val < 0.05) %>% 
+  filter(abs(log2FC) > 1) %>% 
+  grep_rude("Lipid","cer|pe|sm") %>% rownames()
+
+r_tem <- ggplot(allDiff_r,aes(logFC, -log10(adj.P.Val)))+
+  geom_hline(yintercept = -log10(0.05), linetype = "dashed", color = "black")+
+  geom_vline(xintercept = c(-1.2,1.2), linetype = "dashed", color = "black")+
+  geom_point(aes(size = -log10(adj.P.Val), 
+                 color = -log10(adj.P.Val)))+
+  scale_color_gradientn(values = seq(0,1,0.2),
+                        colors = c("#39489f","#39bbec","#f9ed36","#f38466","#b81f25"))+
+  scale_size_continuous(range = c(0,1))+
+  theme_bw(base_size = 12)+
+  theme(panel.grid = element_blank(),
+        legend.position = 'right',
+        legend.justification = c(0,1))+
+
+  guides(col = 
+           guide_colorbar(title = "-Log10_q-value",
+                          ticks.colour = NA,
+                          reverse = T,
+                          title.vjust = 0.8,
+                          barheight = 7,
+                          barwidth = 1),
+         size = "none") +
+
+  geom_text_repel(data = filter(allDiff_r, Lipid %in% core_lipid_r),
+                  max.overlaps = getOption("ggrepel.max.overlaps", default = 20),
+                  aes(label = Lipid),
+                  size = 2, 
+                  color = 'black') +
+  xlab("Log2FC")+
+  ylab("-Log10(FDR q-value)")
+
+core_lipid_p <- allDiff_p %>% 
+  filter(adj.P.Val < 0.05) %>% 
+  filter(abslog2FC > 1) %>% 
+  grep_rude("Lipid","cer|pe") %>% rownames()
+
+p_tem <- ggplot(allDiff_p,aes(log2FC, -log10(adj.P.Val)))+
+  geom_hline(yintercept = -log10(0.05), linetype = "dashed", color = "black")+
+  geom_vline(xintercept = c(-1.2,1.2), linetype = "dashed", color = "black")+
+  geom_point(aes(size = -log10(adj.P.Val), 
+                 color = -log10(adj.P.Val)))+
+  scale_color_gradientn(values = seq(0,1,0.2),
+                        colors = c("#39489f","#39bbec","#f9ed36","#f38466","#b81f25"))+
+  scale_size_continuous(range = c(0,1))+
+  theme_bw(base_size = 12)+
+  theme(panel.grid = element_blank(),
+        legend.position = 'right',
+        legend.justification = c(0,1))+ xlim(-1.3,2.2)+
+
+  guides(col = 
+           guide_colorbar(title = "-Log10_q-value",
+                          ticks.colour = NA,
+                          reverse = T,
+                          title.vjust = 0.8,
+                          barheight = 7,
+                          barwidth = 1),
+         size = "none") +
+
+  geom_text_repel(data = filter(allDiff_p, Lipid %in% core_lipid_p),
+                  max.overlaps = getOption("ggrepel.max.overlaps", default = 20),
+                  aes(label = Lipid),
+                  size = 2, 
+                  color = 'black') +
+  xlab("Log2FC")+
+  ylab("-Log10(FDR q-value)")
+
+ggsave("p_vol.png",plot=p_tem,dpi=300,width = 8,height = 7)
+
+hft_plot <- plot_grid(r_tem,p_tem,ncol = 2)
+ggsave("rp_vol.png",plot=hft_plot,dpi=300,width = 10,height = 4)
+
+####4_Calculating clinical characteristics####
+load("cli_lip.RData")
+
+index_col <- c("age", "sex", "Type", "HF", "CVD", "AF", "Stroke", "DM", 
+               "Hyperlipidemia", "Hyperuricemia", "CKD", "Hypertension", "Con", 
+               "Anemia", "COPD", "GGT", "MonP", "Mon", "TG", "HDL", "ALT", "AST", 
+               "RBC", "Hematocrit", "RDWCV", "RDWSD", "MCV", "IDBL", "ALP", 
+               "LymP", "Lym", "MCH", "MCHC", "MPV", "proALB", "GLB", "Glucose", 
+               "BaP", "Ba", "EoP", "Eo", "ALB", "HGB", "Platelets", "PDW", "PCT", 
+               "DBIL", "中性粒细胞比率", "中性细胞比率", "中性细胞数", 
+               "总胆红素", "总胆汁酸", "TlB", "WBC", "AFU", "AST_ALT", 
+               "TC", "LDL", "白球比值", "大型血小板比率","BNP")
+
+cli_data <- cli_lip_p[,index_col]
+
+tbl_summary(cli_data,by = "HF", digits = all_continuous() ~ 2) |> add_p() |> add_overall() |> as_flex_table() |> 
+  save_as_docx(path = "HF_cli.docx")
+
+####logistic for CHF####
+adj_var_list_r <- name_list(core_lipid_r)
+adj_var_list_p <- name_list(core_lipid_p)
+
+#model1
+ad_mol1_index <- c("age","sex")
+
+#model2
+ad_mol2_index <- c(ad_mol1_index, "CVD","AF", "DM", "Hyperlipidemia", "Hyperuricemia")
+
+#model3
+ad_mol3_index <- c(ad_mol2_index, "CKD", "Hypertension", "Anemia", "COPD", "GLB", 
+                   "Glucose")
+
+#model0-3
+adj_list <- list(NULL,ad_mol1_index,ad_mol2_index,ad_mol3_index)
+tem_r <- lapply(adj_list,function(x) adj_log_glm(data=cli_lip_r,
+                                                    signle_list=adj_var_list_r,
+                                                    group_index = "HF",
+                                                    adj_immo=x)) 
+
+tem_p <- lapply(adj_list,function(x) adj_log_glm(data=cli_lip_p,
+                                                      signle_list=adj_var_list_p,
+                                                      group_index = "HF",
+                                                      adj_immo=x)) 
+
+adj_log_rex_r <- regre_resu_sum(tem_r)
+adj_log_rex_p <- regre_resu_sum(tem_p)
+
+####ePVS overload####
+hf_cliLip_r <- cli_lip_r %>% filter(HF== T)
+hf_cliLip_p <- cli_lip_p %>% filter(HF== T)
+
+hf_cliLip_p$VolS <- ifelse(hf_cliLip_p$ePVS > 5.6,1,0)
+hf_cliLip_r$VolS <- ifelse(hf_cliLip_r$ePVS > 5.6,1,0)
+
+#####logistic for ePVS overload#####
+#model1
+ad_mol1_index <- c("age","sex")
+
+#model2
+ad_mol2_index <- c(ad_mol1_index, "CVD","CKD", "Anemia")
+
+#model3
+ad_mol3_index <- c(ad_mol2_index, "ALB", "WBC")
+
+#model1-4
+adj_list <- list(NULL,ad_mol1_index,ad_mol2_index,ad_mol3_index)
+tem_data_r <- lapply(adj_list,function(x) adj_log_glm(data=hf_cliLip_r,
+                                                    signle_list=adj_var_list_r,
+                                                    group_index = "VolS",
+                                                    adj_immo=x)) 
+
+tem_data_p <- lapply(adj_list,function(x) adj_log_glm(data=hf_cliLip_p,
+                                                      signle_list=adj_var_list_p,
+                                                      group_index = "VolS",
+                                                      adj_immo=x)) 
+adj_log_voc_r <- regre_resu_sum(tem_data_r)
+adj_log_voc_p <- regre_resu_sum(tem_data_p)
+
+
+tbl_summary(hf_cliLip_p[,c(index_col,"VolS")],
+            by = "VolS",
+            digits = all_continuous() ~ 2) |> add_p() |> add_overall() |> as_flex_table() |> 
+  save_as_docx(path = "HF_VolS.docx")
+
+####ROC for ePVS overload####
+roc_all_r_VolV <- c()
+for(i in core_lipid_r){
+  
+  rco_resu <- roc(hf_cliLip_r$VolS,hf_cliLip_r[,i])
+  auc <- rco_resu$auc
+  
+  data_roc <- data.frame(ID=i,auc=auc)
+  roc_all_r_VolV <- rbind(roc_all_r_VolV,data_roc)
+}
+
+roc_all_p_VolV <- c()
+for(i in core_lipid_p){
+  
+  rco_resu <- roc(hf_cliLip_p$VolS,hf_cliLip_p[,i])
+  auc <- rco_resu$auc
+  
+  data_roc <- data.frame(ID=i,auc=auc)
+  roc_all_p_VolV <- rbind(roc_all_p_VolV,data_roc)
+}
+
+####ROC for ePVS overload in lipid subtype####
+roc_all_r_VolV_dif <- roc_all_r_VolV %>% filter(auc > 0.6) %>% grep_rude("ID","pe|cer") %>% arrange(desc(auc))
+
+roc_list_r <- list()
+roc_resu_r <- c()
+
+for(i in core_lipid_r){
+  tem_roc <- roc(hf_cliLip_r$VolS,hf_cliLip_r[,i])
+  ci1=ci.auc(tem_roc, method="bootstrap")
+  ciVec <- as.numeric(ci1)
+  file_name <- paste0(i,"_",round(tem_roc$auc,2))
+  roc_list_r[[file_name]] <- tem_roc
+  
+  tem_auc <- data.frame(Lipid=i,auc=ciVec[2])
+  roc_resu_r <- rbind(roc_resu_r,tem_auc)
+}
+
+roc_resu_r <- roc_resu_r %>% arrange(desc(auc))
+roc_resu_r <- rbind(data.frame(Lipid="BNP",auc=1),roc_resu_r)
+
+roc_r_list <- list()
+for(i in 1:6){
+  tem_id <- roc_resu_r[i,"Lipid"]
+  
+  roc1=roc(hf_cliLip_r$VolS,as.numeric(hf_cliLip_r[,tem_id]))
+  
+  ci1=ci.auc(roc1, method="bootstrap")
+  
+  ciVec=as.numeric(ci1)
+  
+  #ci95 <- paste0(tem_id," ",round(roc1$auc,2)," (",round(ciVec[1],2),"-",round(ciVec[3],2),")")
+  ci95 <- paste0(tem_id," AUC ",round(roc1$auc,2))
+  
+  roc_r_list[[ci95]] <- roc1
+}
+
+
+pdf("ROC_RBC membrane.pdf",width = 6,height = 6)
+
+plot(smooth(roc_r_list[[1]]),col="red",legacy.axes=T)
+plot(smooth(roc_r_list[[2]]),add=T,col="blue")
+plot(smooth(roc_r_list[[3]]),add=T,col="green")
+plot(smooth(roc_r_list[[4]]),add=T,col="grey")
+plot(smooth(roc_r_list[[5]]),add=T,col="orange")
+plot(smooth(roc_r_list[[6]]),add=T,col="yellow")
+
+legend("bottomright", 
+       legend=names(roc_r_list),
+       col=c("red","blue","green","grey","orange","yellow"),
+       lty=1)
+dev.off()
+
+####ROC for plasma in ePVS overload###
+roc_list_p <- list()
+roc_resu_p <- c()
+
+for(i in core_lipid_p){
+  tem_roc <- roc(hf_cliLip_p$VolS,hf_cliLip_p[,i])
+  ci1=ci.auc(tem_roc, method="bootstrap")
+  ciVec <- as.numeric(ci1)
+  file_name <- paste0(i,"_",round(tem_roc$auc,2))
+  roc_list_r[[file_name]] <- tem_roc
+  
+  tem_auc <- data.frame(Lipid=i,auc=ciVec[2])
+  roc_resu_p <- rbind(roc_resu_p,tem_auc)
+}
+
+roc_resu_p <- roc_resu_p %>% arrange(desc(auc))
+
+roc_p_list <- list()
+for(i in 1:5){
+  tem_id <- roc_resu_p[i,"Lipid"]
+  
+  roc1=roc(hf_cliLip_p$VolS,as.numeric(hf_cliLip_p[,tem_id]))
+  
+  ci1=ci.auc(roc1, method="bootstrap")
+  
+  ciVec=as.numeric(ci1)
+  
+  #ci95 <- paste0(tem_id," ",round(roc1$auc,2)," (",round(ciVec[1],2),"-",round(ciVec[3],2),")")
+  ci95 <- paste0(tem_id," AUC ",round(roc1$auc,2))
+  
+  roc_p_list[[ci95]] <- roc1
+}
+
+pdf("ROC_plasma.pdf",width = 6,height = 6)
+plot(smooth(roc_p_list[[1]]),col="red",legacy.axes=T)
+plot(smooth(roc_p_list[[2]]),add=T,col="blue")
+plot(smooth(roc_p_list[[3]]),add=T,col="green")
+plot(smooth(roc_p_list[[4]]),add=T,col="grey")
+plot(smooth(roc_p_list[[5]]),add=T,col="orange")
+
+legend("bottomright", 
+       legend=names(roc_p_list),
+       col=c("red","blue","green","grey","orange"),
+       lty=1)
+
+dev.off()
+
+####MACE data####
+load("cli_lip_ma.RData")
+
+tbl_summary(cli_lip_r_hf_ma[,c(index_col,"MACE1")],by = "MACE1",digits = all_continuous()~2) |> add_p() |> add_overall() |> as_flex_table() |> 
+  save_as_docx(path = "MACE_CHF.docx")
+
+###model1
+ad_mol1_index <- c("age","sex")
+
+#model2
+ad_mol2_index <- c(ad_mol1_index, "CKD","Hypertension", "COPD", "Anemia")
+
+#model3
+ad_mol3_index <- c(ad_mol2_index, "BNP",  "GLB", "Glucose","Ba","ALB","WBC")
+
+#model1-4
+adj_list <- list(NULL,ad_mol1_index,ad_mol2_index,ad_mol3_index)
+
+tem_cox_r <- lapply(adj_list,function(x) adj_cox_reg(data=cli_lip_r_hf_ma,
+                                                    signle_list=adj_var_list_r,
+                                                    statue = "MACE1",
+                                                    live_time = "SurTime",
+                                                    adj_immo=x)) 
+
+tem_cox_p <- lapply(adj_list,function(x) adj_cox_reg(data=cli_lip_p_hf_ma,
+                                                    signle_list=adj_var_list_p,
+                                                    statue = "MACE1",
+                                                    live_time = "SurTime",
+                                                    adj_immo=x)) 
+
+adj_cox_voc_p <- regre_resu_sum(tem_cox_p)
+adj_cox_voc_r <- regre_resu_sum(tem_cox_r)
+
+adj_all <- list(log_p_hf = adj_log_rex_p,
+                log_r_hf = adj_log_rex_r,
+                log_vo_r = adj_log_voc_r,
+                log_vo_p = adj_log_voc_p,
+                cox_r_ma = adj_cox_voc_r,
+                cox_p_ma = adj_cox_voc_p,
+                diff_r_l = cbind(ID=rownames(allDiff_sig_r),allDiff_sig_r),
+                diff_p_l = cbind(ID=rownames(allDiff_sig_p),allDiff_sig_p))
+
+for(i in 1:length(adj_all)){
+  tem_data <- adj_all[[i]]
+  
+  colnames(tem_data) <- paste0(colnames(tem_data),1:ncol(tem_data))
+  
+  colnames(tem_data)[1] <-"Characteristic"
+  
+  tem_data <- tem_data %>% arrange(Characteristic)
+  
+  adj_all[[i]] <- tem_data
+}
+
+openxlsx::write.xlsx(adj_all,file = "all_adj_lo_co_lipid_v1.xlsx")
