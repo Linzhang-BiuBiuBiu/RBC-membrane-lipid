@@ -1,0 +1,131 @@
+####The four functions were applied for multiple logistic and Cox regression####
+
+name_list <- function (name_vector = name_vector) 
+{
+  tem_list <- list()
+  for (i in name_vector) {
+    tem_list[[i]] <- i
+  }
+  return(tem_list)
+}
+
+adj_log_glm <- function (data = data, 
+                         signle_list = signle_list, 
+                         adj_immo = adj_immo, 
+                         group_index = group_index, 
+                         digital = F) 
+  {outfile_name <- paste0(group_index, "_", length(signle_list), 
+                         "_", length(adj_immo), "_.docx")
+  glm_list <- list()
+  if (is.null(adj_immo)) {
+    for (i in names(signle_list)) {
+      tem_name_index <- c(i, group_index)
+      formul_index <- formula(paste0(group_index, "~."))
+      ad_mol <- glm(formul_index, data[, tem_name_index], 
+                    family = binomial)
+      tbl_glm_result <- tbl_regression(ad_mol, exponentiate = T)
+      glm_list[[i]] <- tbl_glm_result
+      if (digital == T) {
+        tbl_merge(tbls = glm_list, tab_spanner = names(glm_list)) %>% 
+          as_flex_table() %>% save_as_docx(path = outfile_name)
+      }
+    }
+  }
+  else {
+    for (i in names(signle_list)) {
+      tem_name_index <- c(i, adj_immo, group_index)
+      formul_index <- formula(paste0(group_index, "~."))
+      ad_mol <- glm(formul_index, data[, tem_name_index], 
+                    family = binomial)
+      tbl_glm_result <- tbl_regression(ad_mol, exponentiate = T)
+      glm_list[[i]] <- tbl_glm_result
+      if (digital == T) {
+        tbl_merge(tbls = glm_list, tab_spanner = names(glm_list)) %>% 
+          as_flex_table() %>% save_as_docx(path = outfile_name)
+      }
+    }
+  }
+  return(glm_list)
+}
+
+adj_cox_reg <- function (data = data, 
+                         signle_list = signle_list, 
+                         statue = statue, 
+                         adj_immo = adj_immo, 
+                         live_time = live_time, 
+                         digital = F) 
+{outfile_name <- paste0(live_time, "_", length(signle_list), 
+                         "_", length(adj_immo), "_cox.docx")
+  glm_list <- list()
+  if (is.null(adj_immo)) {
+    for (i in names(signle_list)) {
+      tem_name_index <- c(i, live_time, statue)
+      formul_index <- formula(paste0("Surv(", live_time, 
+                                     ",", statue, ")", "~."))
+      cox_model <- coxph(formul_index, data[, tem_name_index])
+      tbl_glm_result <- tbl_regression(cox_model, exponentiate = T)
+      glm_list[[i]] <- tbl_glm_result
+      if (digital == T) {
+        save_as_docx(as_flex_table(tbl_merge(tbls = glm_list, 
+                                             tab_spanner = names(glm_list))), path = outfile_name)
+      }
+    }
+  }
+  else {
+    for (i in names(signle_list)) {
+      tem_name_index <- c(i, adj_immo, live_time, statue)
+      formul_index <- formula(paste0("Surv(", live_time, 
+                                     ",", statue, ")", "~."))
+      cox_model <- coxph(formul_index, data[, tem_name_index])
+      tbl_glm_result <- tbl_regression(cox_model, exponentiate = T)
+      glm_list[[i]] <- tbl_glm_result
+      if (digital == T) {
+        save_as_docx(as_flex_table(tbl_merge(tbls = glm_list, 
+                                             tab_spanner = names(glm_list))), path = outfile_name)
+      }
+    }
+  }
+  return(glm_list)
+}
+
+
+
+regre_resu_sum <- function (data = data) 
+{lengt_first <- length(data)
+  lengt_secon <- length(data[[1]])
+  secon_number <- data.frame(ID = 1:lengt_secon, num = NA)
+  for (i in 1:lengt_first) {
+    temp_data <- data[[i]]
+    secon_sum_data <- c()
+    for (j in 1:lengt_secon) {
+      speci_data <- as.data.frame(temp_data[[j]])
+      if (i == 1) {
+        secon_number[j, 2] <- nrow(speci_data)
+      }
+      if (i == 1) {
+        speci_data1 <- speci_data
+        colnames(speci_data1) <- c("Characteristic", 
+                                   "H(OR)", "95%CI", "P-value")
+      }
+      else {
+        speci_data1 <- speci_data[1:secon_number[j, 2], 
+        ]
+        colnames(speci_data1) <- c("Characteristic", 
+                                   "H(OR)", "95%CI", "P-value")
+      }
+      secon_sum_data <- rbind(secon_sum_data, speci_data1)
+    }
+    OHR95CI <- paste0(secon_sum_data[, 2], " (", secon_sum_data[, 
+                                                                3], ")")
+    secon_sum_data$OHR95CI <- OHR95CI
+    secon_sum_data <- secon_sum_data[, c(1, 5, 4)]
+    if (i == 1) {
+      first_sum_data <- secon_sum_data
+    }
+    else {
+      first_sum_data <- cbind(first_sum_data, secon_sum_data[, 
+                                                             -1])
+    }
+  }
+  return(first_sum_data)
+}
