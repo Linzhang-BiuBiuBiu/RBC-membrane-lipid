@@ -1,1 +1,128 @@
+library(readxl)
+library(openxlsx)
+library(stringr)
+library(dplyr)
+library(gtsummary)
+library(tidydr)
+library(stringr)
+library(dplyr)
+library(tidydr)
+library(tidyr)
+library(vioplot)
+library(ggpubr)
+library(this.path)
+
+####1_Setting the working directory####
+setwd(this.dir())
+source("Functions.R")
+load("acti_data.RData")
+
+hf_data <- acti_data %>% filter(HF==T)
+
+####2_Differences between CHF and health Control####
+tbl_summary(acti_data,by = "HF") |> add_p() |> add_overall()|> as_flex_table() |> 
+  save_as_docx(path = "HF_vs_con.docx")
+
+####3_Differences between CHF patients death or not in hospital####
+tbl_summary(hf_data,by = "hosDe") |> add_p() |> add_overall()|> as_flex_table() |> 
+  save_as_docx(path = "hosDe.docx")
+
+####4_logistic regression####
+
+adj_var <- c("Hematocrit", "Hemoglobin", "MCH", "MCHC", "MCV",  
+             "RDW", "RBC", "EFI")
+
+adj_var_list <- name_list(adj_var)
+
+######model2####
+ad_mol1_index <- c("age","sex")
+
+#####model3#####
+ad_mol2_index <- c(ad_mol1_index, "LOS", "DM", 
+                   "CVD","hypertension","obesity","hyperlipidemia","CKD","AF","nicotine","anemia","hyperuricemia","obstructiveSleepApnea")
+
+#####model4#####
+ad_mol3_index <- c(ad_mol2_index, "Platelet", "Glucose", "Potassium", "WBC",  
+                   "Bicarbonate","Creatinine", "Bicarbonate")
+
+#####model 1-4#####
+adj_list <- list(NULL,ad_mol1_index,ad_mol2_index,ad_mol3_index)
+
+#####4_1logistic regression in CHF vs health control####
+tem_hfpr <- lapply(adj_list,function(x) adj_log_glm(data=acti_data,
+                                                    signle_list=adj_var_list,
+                                                    group_index= "HF",
+                                                    adj_immo=x)) 
+
+#####4_2logistic regression in CHF patients with death in hospital or not####
+tem_hfde <- lapply(adj_list,function(x) adj_log_glm(data=hf_data,
+                                                    signle_list=adj_var_list,
+                                                    group_index= "hosDe",
+                                                    adj_immo=x)) 
+#####4_3 summary the logistic regression result#####
+all_hf_logistic_pre <- regre_resu_sum(tem_hfpr)
+all_hf_logistic_dea <- regre_resu_sum(tem_hfde)
+
+pre_hos <- list(pre=all_hf_logistic_pre,
+                dea=all_hf_logistic_dea)
+write.xlsx(pre_hos,file = "pre_dea.xlsx")
+
+####5 summary the result for 8 RBC indicators####
+
+adj_var <- c("ESI","RDW","Hematocrit", "MCH", "Hemoglobin","MCHC", "MCV", "RBC", "HF")
+
+data_pre <- acti_data[,adj_var]
+colnames(data_pre) <- c("ESI","RDW","Hematocrit", "MCH", "Hemoglobin","MCHC", "MCV", "RBC count", "Group")
+
+data_pre$Group <- ifelse(data_pre$Group==FALSE,"Con (n=428,014)",
+                         ifelse(data_pre$Group==TRUE,
+                                "CHF (n=79,642)",
+                                data_pre$Group))
+
+#####5-1 gather the data for sub group in violin plot (CHF vs health control)#####
+data_pr_g <- gather(data_pre,key = "RBCindex",value = "Expression",-Group)
+
+p1 <- ggviolin(data_pr_g, x="RBCindex", y="Expression", color = "Group", 
+              ylab="Value",
+              xlab="",
+              #legend.title=x,
+              add.params = list(fill="white"),
+              palette = c("#EE0000FF","#3B4992FF"),
+              width=1, add = "boxplot") + ylim(0,100) + 
+  stat_compare_means(aes(group=Group),
+                     method="wilcox.test", 
+                     symnum.args=list(cutpoints = c(0, 0.001, 0.01, 0.05, 1),
+                                      symbols = c("***", "**", "*", " ")),
+                     label = "p.signif")
+
+ggsave("RBC_prev.png",plot=p1,dpi=300,width = 7,height = 3.5)
+
+#####5-2 gather the data for sub group in violin plot (CHF death in hospital or not)#####
+adj_var <- c("ESI","RDW","Hematocrit", "MCH", "Hemoglobin","MCHC", "MCV",  
+             "RBC", "hosDe")
+
+data_hos <- hf_data[,adj_var]
+colnames(data_hos) <- c("ESI","RDW","Hematocrit", "MCH", "Hemoglobin","MCHC", "MCV",  
+                        "RBC count", "Group")
+
+data_hos$Group <- ifelse(data_hos$Group==FALSE,"Survival (n =75,642)",
+                         ifelse(data_hos$Group==TRUE,
+                                "Death (n=4,002)",
+                                data_hos$Group))
+
+data_hos_g <- gather(data_hos,key = "RBCindex",value = "Expression",-Group)
+p2 <- ggviolin(data_hos_g, x="RBCindex", y="Expression", color = "Group", 
+              ylab="Value",
+              xlab="",
+              #legend.title=x,
+              add.params = list(fill="white"),
+              palette = c("green","blue"),
+              width=1, add = "boxplot") + ylim(0,100) +theme(legend.position = "top")+
+  stat_compare_means(aes(group=Group),
+                     method="wilcox.test", 
+                     symnum.args=list(cutpoints = c(0, 0.001, 0.01, 0.05, 1),
+                                      symbols = c("***", "**", "*", " ")),
+                     label = "p.signif")
+
+ggsave("RBC_deat.png",plot=p2,dpi=300,width = 7,height = 3.5)
 
